@@ -32,36 +32,20 @@ uartpins 1 2
 timeout 7000
 ```
 
-### M5StickC-Plus (по маркировке на корпусе)
+### M5StickC-Plus (проверенная связка)
 
-По фото на корпусе у Grove-порта отмечено:
+Grove-порт M5StickC-Plus: `G32`, `G33`, 5V, GND.
 
-- `G` — GND
-- `V` — VCC (5V)
-- `G32`
-- `G33`
+Проверенная рабочая конфигурация (ESP-IDF, UART1):
 
-То есть для UART на `M5StickC-Plus` можно использовать:
-
-- `GPIO32`
-- `GPIO33`
-
-Важно:
-
-- порядок `RX/TX` зависит от того, как именно это заведено в прошивке ESP
-- если после подключения нет ответов, нужно поменять местами `RX/TX` (аналогично `pinswap`)
-
-Практический старт для тестовой прошивки (если пины настраиваются командой):
+- `TX = G32` (ESP32 TX → UnitV RX / G35)
+- `RX = G33` (ESP32 RX ← UnitV TX / G34)
 
 ```text
 uartpins 32 33
 ```
 
-Если нет ответа:
-
-```text
-uartpins 33 32
-```
+Скорость: `115200` (совпадает с runtime UnitV).
 
 ## Формат сообщений
 
@@ -391,3 +375,40 @@ scan 1 reliable
 - все ответы `ok:true`
 - `objects` может быть пустым списком (`[]`) в зависимости от сцены
 - `person` может быть `NONE` или `UNKNOWN`, если `faces_data` пустой
+
+## Интеграция с AI Rover (ESP32)
+
+UnitV-M12 подключена к M5StickC-Plus через Grove UART (TX=G32, RX=G33, 115200) и доступна через веб-интерфейс ровера.
+
+### HTTP-эндпоинт
+
+```
+GET /vision?cmd=<CMD>&mode=<MODE>
+```
+
+Параметры:
+
+- `cmd` — команда камере: `PING`, `INFO`, `SCAN`, `OBJECTS`, `WHO` (по умолчанию `SCAN`)
+- `mode` — режим детекции: `RELIABLE` или `FAST` (по умолчанию `RELIABLE`)
+
+Ответ — raw JSON от UnitV (проксируется как есть).
+
+Примеры:
+
+```
+GET /vision?cmd=PING
+GET /vision?cmd=SCAN&mode=RELIABLE
+GET /vision?cmd=OBJECTS&mode=FAST
+GET /vision?cmd=WHO
+```
+
+### AI-инструмент
+
+ИИ-агент ровера (OpenRouter, function calling) имеет инструмент `vision_scan`, который вызывает `SCAN` и возвращает распознанные лица и объекты. Доступен через чат в веб-интерфейсе.
+
+### Мониторинг доступности
+
+ESP32 пингует камеру каждые 10 секунд. Текущий статус (`ok` / `offline`) доступен в:
+
+- `GET /status` → поле `"vision"`
+- Syslog при изменении статуса
