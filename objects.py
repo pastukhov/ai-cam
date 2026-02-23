@@ -251,16 +251,12 @@ class ObjectRuntime:
     if not detections:
       return []
 
-    labels = []
     seen = {}
     for det in detections:
       label = self._label_from_det(det)
       if not label:
         continue
-      if seen.get(label):
-        continue
       seen[label] = True
-      labels.append(label)
 
     # Deterministic output order.
     ordered = []

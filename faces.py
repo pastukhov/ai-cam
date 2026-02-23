@@ -308,12 +308,6 @@ class FaceRuntime:
     if not storage.sd_available() or not storage.ensure_sd_layout():
       raise VisionError("STORAGE_UNAVAILABLE", "sd_missing")
 
-    frames = int(frames)
-    if frames < 1:
-      frames = 1
-    if frames > config.MAX_LEARN_FRAMES:
-      frames = config.MAX_LEARN_FRAMES
-
     best_img = None
     best_area = -1
     best_sharp = -1

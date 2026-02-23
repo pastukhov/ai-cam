@@ -1,0 +1,83 @@
+    1: import unittest
+    1: from unittest import mock
+       
+    1: import config
+    1: import objects
+       
+       
+    2: class FakeDet:
+    1:     def __init__(self, cid):
+    4:         self._cid = cid
+       
+    1:     def classid(self):
+    4:         return self._cid
+       
+       
+    2: class FakeKPU:
+    1:     def __init__(self, detections=None, fail_load=False, fail_run=False):
+    4:         self.detections = detections if detections is not None else []
+    4:         self.fail_load = fail_load
+    4:         self.fail_run = fail_run
+    4:         self.loaded = None
+       
+    1:     def load(self, model_ref):
+    2:         if self.fail_load:
+                   raise RuntimeError("load")
+    2:         self.loaded = model_ref
+    2:         return "task"
+       
+    1:     def init_yolo2(self, *args, **kwargs):
+    2:         return None
+       
+    1:     def run_yolo2(self, _task, _frame):
+    2:         if self.fail_run:
+    1:             raise RuntimeError("run")
+    1:         return self.detections
+       
+    1:     def deinit(self, _task):
+               return None
+       
+       
+    2: class ObjectRuntimeTests(unittest.TestCase):
+    1:     def test_model_missing(self):
+    1:         rt = objects.ObjectRuntime(kpu_mod=FakeKPU())
+    3:         with mock.patch("storage.sd_available", return_value=False), mock.patch(
+    1:             "storage.ensure_sd_layout", return_value=False
+    2:         ), mock.patch.object(config, "OBJECT_MODEL_FLASH_ADDR", None):
+    2:             with self.assertRaises(objects.VisionError) as ctx:
+    1:                 rt.ensure_loaded()
+    1:         self.assertEqual(ctx.exception.code, "MODEL_MISSING")
+       
+    1:     def test_allow_partial_on_missing_model(self):
+    1:         rt = objects.ObjectRuntime(kpu_mod=FakeKPU())
+    3:         with mock.patch("storage.sd_available", return_value=False), mock.patch(
+    1:             "storage.ensure_sd_layout", return_value=False
+    2:         ), mock.patch.object(config, "OBJECT_MODEL_FLASH_ADDR", None):
+    1:             labels = rt.detect_frame(object(), allow_partial=True)
+    1:         self.assertEqual(labels, [])
+       
+    1:     def test_detect_filters_and_orders_labels(self):
+    1:         dets = [FakeDet(1), FakeDet(0), FakeDet(1), FakeDet(99)]
+    1:         kpu = FakeKPU(detections=dets)
+    1:         rt = objects.ObjectRuntime(kpu_mod=kpu)
+       
+    3:         with mock.patch("storage.sd_available", return_value=True), mock.patch(
+    1:             "storage.ensure_sd_layout", return_value=True
+    2:         ), mock.patch("objects._os.stat", return_value=True):
+    1:             labels = rt.detect_frame(object())
+       
+    1:         self.assertEqual(labels, ["door", "window"])
+    1:         self.assertEqual(rt.model_source(), "sd")
+       
+    1:     def test_detect_vision_failure_when_run_fails(self):
+    1:         rt = objects.ObjectRuntime(kpu_mod=FakeKPU(fail_run=True))
+    3:         with mock.patch("storage.sd_available", return_value=True), mock.patch(
+    1:             "storage.ensure_sd_layout", return_value=True
+    2:         ), mock.patch("objects._os.stat", return_value=True):
+    2:             with self.assertRaises(objects.VisionError) as ctx:
+    1:                 rt.detect_frame(object())
+    1:         self.assertEqual(ctx.exception.code, "VISION_FAILED")
+       
+       
+    1: if __name__ == "__main__":
+           unittest.main()

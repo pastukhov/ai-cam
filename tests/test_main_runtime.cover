@@ -1,0 +1,174 @@
+    1: import json
+    1: import unittest
+    1: from unittest import mock
+       
+    1: import config
+    1: import main
+    1: from vision import VisionError
+       
+       
+    2: class FakeUART:
+    1:     def __init__(self):
+    9:         self.writes = []
+       
+    1:     def write(self, data):
+   10:         self.writes.append(data)
+   10:         return len(data)
+       
+       
+    2: class FakeVision:
+    1:     def __init__(self):
+    9:         self.calls = []
+    9:         self.recover_called = 0
+       
+    1:     def info(self):
+               self.calls.append(("INFO", None))
+               return {"tool": "vision_k210"}
+       
+    1:     def scan(self, args, deadline_ms):
+               self.calls.append(("SCAN", args))
+               return {"person": "NONE", "objects": [], "frames": 1, "truncated": False, "faces_detected": 0}
+       
+    1:     def who(self, args, deadline_ms):
+               self.calls.append(("WHO", args))
+               return {"person": "NONE", "frames": 1}
+       
+    1:     def objects(self, args, deadline_ms):
+               self.calls.append(("OBJECTS", args))
+               return {"objects": [], "frames": 1, "truncated": False}
+       
+    1:     def learn(self, args, deadline_ms):
+               self.calls.append(("LEARN", args))
+               return {"status": "learned", "person": "OWNER_1"}
+       
+    1:     def reset_faces(self):
+               self.calls.append(("RESET_FACES", None))
+               return {"status": "reset"}
+       
+    1:     def set_debug(self, enabled):
+    1:         self.calls.append(("DEBUG", enabled))
+    1:         return {"debug": bool(enabled)}
+       
+    1:     def recover(self):
+    2:         self.recover_called += 1
+       
+       
+    2: class RuntimeTests(unittest.TestCase):
+    1:     def _new_runtime(self):
+    9:         uart = FakeUART()
+    9:         rt = main.Runtime(uart)
+    9:         rt._vision = FakeVision()
+    9:         return rt, uart
+       
+    1:     def _last_json(self, uart):
+    8:         self.assertTrue(uart.writes)
+    8:         return json.loads(uart.writes[-1].decode("utf-8"))
+       
+    1:     def test_ping(self):
+    1:         rt, uart = self._new_runtime()
+    1:         rt._handle_line(b'{"cmd":"PING","req_id":"1"}')
+    1:         data = self._last_json(uart)
+    1:         self.assertTrue(data["ok"])
+    1:         self.assertEqual(data["result"]["status"], "ok")
+       
+    1:     def test_dedup_returns_byte_identical_response(self):
+    1:         rt, uart = self._new_runtime()
+    1:         line = b'{"cmd":"PING","req_id":"same"}'
+    1:         rt._handle_line(line)
+    1:         first = uart.writes[-1]
+    1:         rt._handle_line(line)
+    1:         second = uart.writes[-1]
+    1:         self.assertEqual(first, second)
+       
+    1:     def test_unknown_command_returns_bad_request(self):
+    1:         rt, uart = self._new_runtime()
+    1:         rt._handle_line(b'{"cmd":"NOPE","req_id":"2"}')
+    1:         data = self._last_json(uart)
+    1:         self.assertFalse(data["ok"])
+    1:         self.assertEqual(data["error"]["code"], "BAD_REQUEST")
+       
+    1:     def test_bad_json_returns_bad_request(self):
+    1:         rt, uart = self._new_runtime()
+    1:         rt._handle_line(b'{bad')
+    1:         data = self._last_json(uart)
+    1:         self.assertFalse(data["ok"])
+    1:         self.assertEqual(data["error"]["code"], "BAD_REQUEST")
+       
+    1:     def test_busy_returns_busy(self):
+    1:         rt, uart = self._new_runtime()
+    1:         rt._processing = True
+    1:         rt._handle_line(b'{"cmd":"PING","req_id":"3"}')
+    1:         data = self._last_json(uart)
+    1:         self.assertFalse(data["ok"])
+    1:         self.assertEqual(data["error"]["code"], "BUSY")
+       
+    1:     def test_vision_error_triggers_recover(self):
+    1:         rt, uart = self._new_runtime()
+       
+    1:         def boom(_args, _deadline):
+    1:             raise VisionError("VISION_FAILED", "x")
+       
+    1:         rt._vision.scan = boom
+    1:         rt._handle_line(b'{"cmd":"SCAN","req_id":"4","args":{}}')
+    1:         data = self._last_json(uart)
+    1:         self.assertFalse(data["ok"])
+    1:         self.assertEqual(data["error"]["code"], "VISION_FAILED")
+    1:         self.assertEqual(rt._vision.recover_called, 1)
+       
+    1:     def test_missing_req_id(self):
+    1:         rt, uart = self._new_runtime()
+    1:         rt._handle_line(b'{"cmd":"PING"}')
+    1:         data = self._last_json(uart)
+    1:         self.assertFalse(data["ok"])
+    1:         self.assertEqual(data["error"]["code"], "BAD_REQUEST")
+       
+    1:     def test_debug_dispatch(self):
+    1:         rt, uart = self._new_runtime()
+    1:         rt._handle_line(b'{"cmd":"DEBUG","req_id":"d","args":{"enabled":true}}')
+    1:         data = self._last_json(uart)
+    1:         self.assertTrue(data["ok"])
+    1:         self.assertTrue(data["result"]["debug"])
+       
+    1:     def test_timeout_error_triggers_recover(self):
+    1:         rt, uart = self._new_runtime()
+       
+    1:         def boom(_req, _deadline):
+    1:             raise VisionError("TIMEOUT", "timeout")
+       
+    1:         rt._dispatch = boom
+    1:         rt._handle_line(b'{"cmd":"PING","req_id":"t"}')
+    1:         data = self._last_json(uart)
+    1:         self.assertFalse(data["ok"])
+    1:         self.assertEqual(data["error"]["code"], "TIMEOUT")
+    1:         self.assertEqual(rt._vision.recover_called, 1)
+       
+       
+    2: class DedupCacheTests(unittest.TestCase):
+    1:     def test_ttl_expiry(self):
+    1:         cache = main.DedupCache(ttl_ms=10)
+    1:         cache.set("x", b"abc", now=0)
+    1:         self.assertEqual(cache.get("x", now=5), b"abc")
+    1:         self.assertIsNone(cache.get("x", now=11))
+       
+       
+    2: class BuildUartTests(unittest.TestCase):
+    1:     def test_build_uart_fallback(self):
+    2:         class MachineMock:
+    1:             def __init__(self):
+    1:                 self.calls = []
+       
+    1:             def UART(self, uart_id, baud, **kwargs):
+    2:                 self.calls.append((uart_id, baud, kwargs))
+    2:                 if kwargs:
+    1:                     raise RuntimeError("kwargs unsupported")
+    1:                 return "uart-ok"
+       
+    1:         mm = MachineMock()
+    2:         with mock.patch.object(main, "machine", mm):
+    1:             out = main._build_uart()
+    1:         self.assertEqual(out, "uart-ok")
+    1:         self.assertEqual(mm.calls[0][0], config.UART_ID)
+       
+       
+    1: if __name__ == "__main__":
+           unittest.main()

@@ -1,0 +1,67 @@
+    1: import os
+    1: import tempfile
+    1: import unittest
+       
+    1: import config
+    1: import storage
+       
+       
+    2: class StorageTests(unittest.TestCase):
+    1:     def setUp(self):
+    5:         self.tmp = tempfile.TemporaryDirectory()
+    5:         self.root = self.tmp.name
+    5:         self.orig = {
+    5:             "SD_ROOT": config.SD_ROOT,
+    5:             "SD_FACES_DIR": config.SD_FACES_DIR,
+    5:             "SD_MODELS_DIR": config.SD_MODELS_DIR,
+    5:             "SD_CONFIG_PATH": config.SD_CONFIG_PATH,
+    5:             "OWNER_1_FACE_PATH": config.OWNER_1_FACE_PATH,
+    5:             "OWNER_2_FACE_PATH": config.OWNER_2_FACE_PATH,
+               }
+       
+    5:         config.SD_ROOT = self.root
+    5:         config.SD_FACES_DIR = os.path.join(self.root, "faces")
+    5:         config.SD_MODELS_DIR = os.path.join(self.root, "models")
+    5:         config.SD_CONFIG_PATH = os.path.join(self.root, "config.json")
+    5:         config.OWNER_1_FACE_PATH = os.path.join(config.SD_FACES_DIR, "owner_1.jpg")
+    5:         config.OWNER_2_FACE_PATH = os.path.join(config.SD_FACES_DIR, "owner_2.jpg")
+       
+    1:     def tearDown(self):
+   35:         for k, v in self.orig.items():
+   30:             setattr(config, k, v)
+    5:         self.tmp.cleanup()
+       
+    1:     def test_sd_layout_and_face_roundtrip(self):
+    1:         self.assertTrue(storage.sd_available())
+    1:         self.assertTrue(storage.ensure_sd_layout())
+       
+    1:         data = b"jpeg-bytes"
+    1:         self.assertTrue(storage.save_face_jpeg(config.PERSON_OWNER_1, data))
+    1:         self.assertEqual(storage.load_face_bytes(config.PERSON_OWNER_1), data)
+       
+    1:     def test_face_path_and_delete_reset(self):
+    1:         storage.ensure_sd_layout()
+    1:         storage.save_face_jpeg(config.PERSON_OWNER_1, b"1")
+    1:         storage.save_face_jpeg(config.PERSON_OWNER_2, b"2")
+    1:         self.assertEqual(storage.reset_faces(), 2)
+    1:         self.assertIsNone(storage.load_face_bytes(config.PERSON_OWNER_1))
+    1:         self.assertIsNone(storage.load_face_bytes(config.PERSON_OWNER_2))
+       
+    1:     def test_load_face_files(self):
+    1:         storage.ensure_sd_layout()
+    1:         storage.save_face_jpeg(config.PERSON_OWNER_1, b"1")
+    1:         faces = storage.load_face_files()
+    1:         self.assertIn(config.PERSON_OWNER_1, faces)
+    1:         self.assertNotIn(config.PERSON_OWNER_2, faces)
+       
+    1:     def test_read_write_config(self):
+    1:         self.assertEqual(storage.read_config({"a": 1}), {"a": 1})
+    1:         self.assertTrue(storage.write_config({"x": 2}))
+    1:         self.assertEqual(storage.read_config({}), {"x": 2})
+       
+    1:     def test_write_config_rejects_non_dict(self):
+    1:         self.assertFalse(storage.write_config([1, 2, 3]))
+       
+       
+    1: if __name__ == "__main__":
+           unittest.main()

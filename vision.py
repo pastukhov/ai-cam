@@ -54,10 +54,10 @@ def _bool_arg(value, default=False):
 
 
 class VisionRuntime:
-  def __init__(self):
+  def __init__(self, face_runtime=None, object_runtime=None):
     self._sensor = None
-    self._face = FaceRuntime()
-    self._objects = ObjectRuntime()
+    self._face = face_runtime or FaceRuntime()
+    self._objects = object_runtime or ObjectRuntime()
     self._debug_enabled = False
     self._last_debug = {}
     self._camera_ready = False
@@ -133,7 +133,7 @@ class VisionRuntime:
       "capabilities": self.capabilities(),
     }
 
-  def _scan_frames_count(self, args, with_objects):
+  def _scan_frames_count(self, args):
     mode = "RELIABLE"
     if isinstance(args, dict):
       mode = str(args.get("mode", "RELIABLE")).upper()
@@ -151,9 +151,7 @@ class VisionRuntime:
 
     if frames < 1:
       frames = 1
-    if with_objects and frames > config.MAX_SCAN_FRAMES:
-      frames = config.MAX_SCAN_FRAMES
-    if (not with_objects) and frames > config.MAX_SCAN_FRAMES:
+    if frames > config.MAX_SCAN_FRAMES:
       frames = config.MAX_SCAN_FRAMES
     return frames
 
@@ -196,7 +194,7 @@ class VisionRuntime:
   def scan(self, args, deadline_ms):
     if args is None:
       args = {}
-    frames = self._scan_frames_count(args, with_objects=True)
+    frames = self._scan_frames_count(args)
     allow_partial = _bool_arg(args.get("allow_partial"), False)
 
     person_samples = []
@@ -244,7 +242,7 @@ class VisionRuntime:
   def who(self, args, deadline_ms):
     if args is None:
       args = {}
-    frames = self._scan_frames_count(args, with_objects=False)
+    frames = self._scan_frames_count(args)
     begin_ms = _ticks_ms()
     samples = []
 
@@ -274,7 +272,7 @@ class VisionRuntime:
   def objects(self, args, deadline_ms):
     if args is None:
       args = {}
-    frames = self._scan_frames_count(args, with_objects=True)
+    frames = self._scan_frames_count(args)
     allow_partial = _bool_arg(args.get("allow_partial"), False)
     begin_ms = _ticks_ms()
 

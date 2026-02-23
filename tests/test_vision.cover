@@ -1,0 +1,136 @@
+    1: import unittest
+    1: from unittest import mock
+       
+    1: import config
+    1: import vision
+       
+       
+    2: class DummySensor:
+    1:     RGB565 = "rgb565"
+    1:     QVGA = "qvga"
+       
+    1:     def __init__(self):
+    7:         self.calls = []
+       
+    1:     def reset(self):
+               self.calls.append("reset")
+       
+    1:     def set_pixformat(self, fmt):
+               self.calls.append(("pix", fmt))
+       
+    1:     def set_framesize(self, size):
+               self.calls.append(("size", size))
+       
+    1:     def run(self, val):
+               self.calls.append(("run", val))
+       
+    1:     def skip_frames(self, time=0):
+               self.calls.append(("skip", time))
+       
+    1:     def snapshot(self):
+    4:         return object()
+       
+       
+    2: class FakeFace:
+    1:     def __init__(self):
+    7:         self.samples = []
+    7:         self.learn_calls = []
+       
+    1:     def load_templates(self):
+               return 1
+       
+    1:     def recognize_frame(self, _frame):
+    2:         if self.samples:
+    2:             return self.samples.pop(0)
+               return {"person": config.PERSON_NONE, "confidence": 0.0, "faces_detected": 0}
+       
+    1:     def vote_people(self, samples):
+    2:         return {"person": samples[0]["person"], "confidence": samples[0].get("confidence", 0.0), "faces_detected": 1}
+       
+    1:     def templates_loaded(self):
+    3:         return 1
+       
+    1:     def learn(self, capture_cb, person, frames, deadline_ms):
+    1:         self.learn_calls.append((person, frames))
+    1:         capture_cb()
+    1:         return {"status": "learned", "person": person}
+       
+    1:     def reset_faces(self):
+    1:         return {"status": "reset"}
+       
+    1:     def deinit(self):
+    1:         return None
+       
+       
+    2: class FakeObjects:
+    1:     def __init__(self):
+    7:         self.calls = []
+       
+    1:     def detect_frame(self, _frame, allow_partial=False):
+    2:         self.calls.append(allow_partial)
+    2:         return ["door"]
+       
+    1:     def model_source(self):
+    2:         return "sd"
+       
+    1:     def deinit(self):
+    1:         return None
+       
+       
+    2: class VisionRuntimeTests(unittest.TestCase):
+    1:     def _new_runtime(self):
+    7:         rt = vision.VisionRuntime()
+    7:         rt._sensor = DummySensor()
+    7:         rt._camera_ready = True
+    7:         rt._face = FakeFace()
+    7:         rt._objects = FakeObjects()
+    7:         return rt
+       
+    1:     def test_info_and_capabilities(self):
+    1:         rt = self._new_runtime()
+    2:         with mock.patch("storage.sd_available", return_value=True):
+    1:             info = rt.info()
+    1:         self.assertEqual(info["tool"], config.TOOL_NAME)
+    1:         self.assertTrue(info["capabilities"]["sd"])
+       
+    1:     def test_scan_success(self):
+    1:         rt = self._new_runtime()
+    1:         rt._face.samples = [{"person": config.PERSON_OWNER_1, "confidence": 0.92, "faces_detected": 1}]
+    1:         out = rt.scan({"mode": "FAST", "frames": 1, "allow_partial": True}, vision._ticks_ms() + 10000)
+    1:         self.assertEqual(out["person"], config.PERSON_OWNER_1)
+    1:         self.assertEqual(out["objects"], ["door"])
+    1:         self.assertIn("confidence", out)
+       
+    1:     def test_who_none_has_no_confidence(self):
+    1:         rt = self._new_runtime()
+    1:         rt._face.samples = [{"person": config.PERSON_NONE, "confidence": 0.0, "faces_detected": 0}]
+    1:         out = rt.who({"frames": 1}, vision._ticks_ms() + 10000)
+    1:         self.assertEqual(out["person"], config.PERSON_NONE)
+    1:         self.assertNotIn("confidence", out)
+       
+    1:     def test_objects_success(self):
+    1:         rt = self._new_runtime()
+    1:         out = rt.objects({"mode": "FAST", "frames": 1}, vision._ticks_ms() + 10000)
+    1:         self.assertEqual(out["objects"], ["door"])
+    1:         self.assertEqual(out["frames"], 1)
+       
+    1:     def test_learn_clamps_frames(self):
+    1:         rt = self._new_runtime()
+    1:         out = rt.learn({"person": config.PERSON_OWNER_1, "frames": 999}, vision._ticks_ms() + 10000)
+    1:         self.assertEqual(out["status"], "learned")
+    1:         self.assertEqual(rt._face.learn_calls[-1][1], config.MAX_LEARN_FRAMES)
+       
+    1:     def test_reset_faces(self):
+    1:         rt = self._new_runtime()
+    1:         out = rt.reset_faces()
+    1:         self.assertEqual(out["status"], "reset")
+       
+    1:     def test_recover_resets_camera_ready(self):
+    1:         rt = self._new_runtime()
+    1:         rt._camera_ready = True
+    1:         rt.recover()
+    1:         self.assertFalse(rt._camera_ready)
+       
+       
+    1: if __name__ == "__main__":
+           unittest.main()

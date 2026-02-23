@@ -1,0 +1,46 @@
+    1: import json
+    1: import unittest
+       
+    1: import config
+    1: import protocol
+       
+       
+    2: class FakeUART:
+    1:     def __init__(self):
+    1:         self.writes = []
+       
+    1:     def write(self, data):
+    1:         self.writes.append(data)
+    1:         return len(data)
+       
+       
+    2: class ProtocolTests(unittest.TestCase):
+    1:     def test_parse_json_line_success(self):
+    1:         payload, err = protocol.parse_json_line(b'{"cmd":"PING","req_id":"1"}')
+    1:         self.assertIsNone(err)
+    1:         self.assertEqual(payload["cmd"], "PING")
+    1:         self.assertEqual(payload["req_id"], "1")
+       
+    1:     def test_parse_json_line_bad_json(self):
+    1:         payload, err = protocol.parse_json_line(b'{bad')
+    1:         self.assertIsNone(payload)
+    1:         self.assertEqual(err["error"]["code"], "BAD_REQUEST")
+       
+    1:     def test_safe_json_encode_respects_limit(self):
+    1:         huge = {"req_id": "x", "ok": True, "result": {"blob": "a" * 3000}}
+    1:         raw = protocol.safe_json_encode(huge)
+    1:         self.assertLessEqual(len(raw), config.MAX_JSON_BYTES)
+    1:         decoded = json.loads(raw.decode("utf-8"))
+    1:         self.assertFalse(decoded["ok"])
+    1:         self.assertEqual(decoded["error"]["code"], "BAD_REQUEST")
+       
+    1:     def test_uart_writeline_adds_newline(self):
+    1:         uart = FakeUART()
+    1:         ok = protocol.uart_writeline(uart, {"req_id": "1", "ok": True, "result": {"x": 1}})
+    1:         self.assertTrue(ok)
+    1:         self.assertEqual(len(uart.writes), 1)
+    1:         self.assertTrue(uart.writes[0].endswith(b"\n"))
+       
+       
+    1: if __name__ == "__main__":
+           unittest.main()

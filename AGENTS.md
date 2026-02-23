@@ -1,27 +1,29 @@
 # Repository Guidelines
 
 ## Project Structure & Module Organization
-This repository is a device-flashing workspace, not a typical application codebase.
+This repository contains K210/UnitV MicroPython vision helpers plus deployment tooling.
 
-- Top-level firmware artifacts: `*.bin`, `*.kfpkg`, `*.run`, `*.AppImage`.
-- `kflash_gui/`: bundled upstream flashing tool files and runtime libraries.
-- `references/MaixPy/`: vendor/reference source tree for documentation and examples.
-- `owner.py`: local utility script.
-- `todo.md`: working notes.
+- Top-level runtime modules: `main.py`, `vision.py`, `faces.py`, `objects.py`, `protocol.py`, `storage.py`, `config.py`, `led.py`.
+- Docs and design notes: `README.md`, `memory.md`, `docs/` (protocols, plans, deployment notes).
+- Deployment tooling: `tools/k210_loader.py` and `tools/README.md`.
+- ESP32/ATOM test fixture: `atoms3-e2e-tester/` (PlatformIO project).
+- Agent metadata: `AGENTS.md`, `CLAUDE.md`, `.claude/`.
 
-Treat `kflash_gui/` and `references/` as third-party or reference content unless a task explicitly requires changes there.
+Treat `atoms3-e2e-tester/` and any bundled/vendor assets as separate concerns unless the task explicitly targets them.
 
 ## Build, Test, and Development Commands
-There is no formal build pipeline in this repo. Use lightweight verification commands:
+There is no centralized build/test pipeline. Use targeted checks:
 
-- `ls -la` — inspect top-level files and artifacts.
-- `rg --files` — list tracked files quickly.
-- `rg "<pattern>" -n` — search code or docs.
-- `python3 owner.py` — run the local utility script (if relevant to your change).
-- `python3 -m py_compile owner.py` — syntax-check Python edits.
+- `ls -la` — inspect repo contents.
+- `rg --files` — fast file listing.
+- `rg "<pattern>" -n` — search code/docs.
+- `python3 -m py_compile main.py vision.py faces.py objects.py protocol.py storage.py config.py led.py` — syntax check runtime modules.
+- `python3 -m py_compile tools/k210_loader.py` — syntax check loader utility.
+- `python3 tools/k210_loader.py --help` — validate CLI interface after changes.
+- `pio run -d atoms3-e2e-tester` — build ESP32 test firmware when touching `atoms3-e2e-tester/`.
 
-## Flashing Firmware
-Use a local virtual environment for flashing tools to avoid polluting the system Python.
+## Device Flashing / Deployment
+Use a virtual environment for local tooling when possible.
 
 ```bash
 python3 -m venv .venv
@@ -29,39 +31,53 @@ source .venv/bin/activate
 pip install kflash
 ```
 
-Flash the official UnitV MaixPy firmware (per M5 docs):
+Typical deploy flow is documented in `tools/README.md` and uses:
 
 ```bash
-kflash M5StickV_Firmware_v5.1.2.kfpkg
+python3 tools/k210_loader.py --port /dev/ttyUSB0 --no-models
 ```
 
-If `kflash` is already installed in an active environment, skip the setup and run the flashing command directly.
+When changing deployment behavior, keep `tools/README.md` examples in sync.
 
 ## Coding Style & Naming Conventions
-- Python: follow PEP 8 defaults, 4-space indentation, UTF-8, LF endings.
-- Shell snippets in docs should be copy-paste safe and minimal.
-- New helper scripts should use lowercase names with hyphens (example: `flash-check.sh`).
-- Keep changes narrow; avoid reformatting unrelated files.
+- Python: PEP 8, 4-space indentation, UTF-8, LF endings.
+- Keep MicroPython compatibility in mind (avoid unnecessary CPython-only features in runtime modules).
+- JSON examples in docs should be valid and minimal.
+- New scripts/utilities: lowercase names with hyphens when shell scripts, `snake_case.py` for Python.
+- Keep diffs focused; do not reformat unrelated files.
 
 ## Testing Guidelines
-No automated test suite is currently configured. For code changes:
+No automated suite is configured. For code changes:
 
-- Run a syntax check (`python3 -m py_compile <file>`).
-- Execute the changed script with a realistic local input.
-- For command docs, validate each command once before committing.
+- Run `python3 -m py_compile` on every edited Python file.
+- Run the touched script/tool with `--help` or a realistic dry-run input when available.
+- For protocol/doc changes, verify example JSON/commands against current code paths.
+- For `atoms3-e2e-tester/` changes, build with PlatformIO and note the board/environment used.
 
-If you add reusable tooling, place tests under `tools/tests/` as `*_smoke.sh`.
+If you add reusable tooling/tests, prefer `tools/tests/*_smoke.sh` and keep them fast.
 
 ## Commit & Pull Request Guidelines
-- Use concise imperative commits (example: `docs: add flashing workflow notes`).
-- Group related changes; avoid mixing docs, binaries, and refactor work in one commit.
+- Use concise imperative commits, optionally scoped (examples: `docs: update UART protocol examples`, `tools: fix maixctl upload fallback`).
+- Group related changes only; do not mix protocol logic, docs, and firmware artifacts unnecessarily.
 - PRs should include:
-  - Purpose and scope
+  - Purpose/scope
   - Files changed
   - Manual verification steps and outcomes
-  - Risks (especially around firmware artifacts or flashing instructions)
+  - Risks (especially deployment, flashing, and serial protocol compatibility)
 
 ## Security & Configuration Tips
-- Do not commit secrets, device IDs, or private tokens.
-- Avoid editing or rehosting large vendor binaries unless explicitly required.
-- Verify checksums/source authenticity for newly added firmware artifacts.
+- Do not commit secrets, private tokens, or local device identifiers/ports.
+- Avoid committing large binaries/firmware artifacts unless required and sourced.
+- Double-check serial port paths and flashing targets before running destructive device operations.
+- Preserve backward compatibility for UART JSONL protocol fields unless coordinated with the ESP-side consumer.
+
+## Local Network Notes (Observed 2026-02-22)
+- AI Rover is discoverable via mDNS/DNS-SD as `ai-rover.local` (`_http._tcp`, port `80`).
+- Observed IPv4 address during verification: `192.168.11.114` (DHCP; may change).
+- DNS-SD TXT records matched `docs/protocols/esp-mdns-discovery.md` (`api_cmd`, `api_status`, `api_vision`, `api_chat`, `api_chat_result`).
+- `GET /status` responded with rover state and battery data; one observed response included `"vision":"offline"` even while the camera endpoint was reachable.
+- `GET /vision?cmd=PING` and `GET /vision?cmd=INFO` both returned `ok:true`.
+- `GET /vision?cmd=WHO` returned `ok:true` with `person:"NONE"` during test.
+- `GET /vision?cmd=OBJECTS` returned `ok:true` and detected sample objects (`table`, `cup`, `person`) during test.
+- `GET /vision?cmd=SCAN&mode=RELIABLE` showed one transient `VISION_FAILED` (`objects_detect`) and then succeeded on retry.
+- Practical note: if `/status` reports `"vision":"offline"`, verify with direct `/vision?cmd=PING` before assuming UnitV is actually down.

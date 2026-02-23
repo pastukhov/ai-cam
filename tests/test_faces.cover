@@ -1,0 +1,161 @@
+    1: import unittest
+    1: from unittest import mock
+       
+    1: import config
+    1: import faces
+       
+       
+    2: class FakeDet:
+    1:     def __init__(self, x=0, y=0, w=10, h=10):
+    3:         self._x = x
+    3:         self._y = y
+    3:         self._w = w
+    3:         self._h = h
+       
+    1:     def x(self):
+               return self._x
+       
+    1:     def y(self):
+               return self._y
+       
+    1:     def w(self):
+               return self._w
+       
+    1:     def h(self):
+               return self._h
+       
+       
+    2: class FakeStat:
+    1:     def __init__(self, l_mean=0, l_stdev=0):
+    3:         self._l_mean = l_mean
+    3:         self._l_stdev = l_stdev
+       
+    1:     def l_mean(self):
+    2:         return self._l_mean
+       
+    1:     def l_stdev(self):
+    1:         return self._l_stdev
+       
+       
+    2: class FakeImage:
+    1:     def __init__(self, score=10, sharp=5):
+   14:         self.score = score
+   14:         self.sharp = sharp
+   14:         self.saved_path = None
+       
+    1:     def copy(self, roi=None):
+    2:         return FakeImage(self.score, self.sharp)
+       
+    1:     def difference(self, template):
+    2:         self.score = getattr(template, "score", self.score)
+       
+    1:     def get_statistics(self):
+    3:         return FakeStat(l_mean=self.score, l_stdev=self.sharp)
+       
+    1:     def resize(self, _w, _h):
+               return self
+       
+    1:     def compress(self, quality=90):
+    1:         return b"jpeg"
+       
+    1:     def save(self, path):
+               self.saved_path = path
+       
+       
+    2: class FakeFrame(FakeImage):
+    1:     def __init__(self, score=10, sharp=5, width=320, height=240):
+    6:         super().__init__(score, sharp)
+    6:         self._width = width
+    6:         self._height = height
+       
+    1:     def width(self):
+               return self._width
+       
+    1:     def height(self):
+               return self._height
+       
+       
+    2: class FaceRuntimeTests(unittest.TestCase):
+    1:     def test_person_vote_tie_break_by_conf(self):
+    2:         p, c = faces._person_from_votes(
+    1:             [config.PERSON_OWNER_1, config.PERSON_OWNER_2],
+    1:             {config.PERSON_OWNER_1: 0.8, config.PERSON_OWNER_2: 0.9},
+               )
+    1:         self.assertEqual(p, config.PERSON_OWNER_2)
+    1:         self.assertEqual(c, 0.9)
+       
+    1:     def test_recognize_none_when_no_face(self):
+    1:         rt = faces.FaceRuntime(image_mod=object(), kpu_mod=object())
+    2:         rt._primary_face = lambda _frame: (None, 0)
+    1:         out = rt.recognize_frame(FakeFrame())
+    1:         self.assertEqual(out["person"], config.PERSON_NONE)
+       
+    1:     def test_recognize_unknown_without_templates(self):
+    1:         rt = faces.FaceRuntime(image_mod=object(), kpu_mod=object())
+    2:         rt._primary_face = lambda _frame: (FakeDet(), 1)
+    2:         rt._extract_roi = lambda _frame, _bbox: (FakeImage(score=50), (0, 0, 10, 10))
+    1:         out = rt.recognize_frame(FakeFrame())
+    1:         self.assertEqual(out["person"], config.PERSON_UNKNOWN)
+       
+    1:     def test_recognize_best_template(self):
+    1:         rt = faces.FaceRuntime(image_mod=object(), kpu_mod=object())
+    2:         rt._primary_face = lambda _frame: (FakeDet(), 1)
+    2:         rt._extract_roi = lambda _frame, _bbox: (FakeImage(score=10), (0, 0, 10, 10))
+    1:         rt._known_templates = {
+    1:             config.PERSON_OWNER_1: FakeImage(score=11),
+    1:             config.PERSON_OWNER_2: FakeImage(score=16),
+               }
+    1:         out = rt.recognize_frame(FakeFrame())
+    1:         self.assertEqual(out["person"], config.PERSON_OWNER_1)
+    1:         self.assertGreater(out["confidence"], 0.7)
+       
+    1:     def test_learn_bad_person(self):
+    1:         rt = faces.FaceRuntime(image_mod=object(), kpu_mod=object())
+    2:         with self.assertRaises(faces.VisionError) as ctx:
+    1:             rt.learn(lambda: FakeFrame(), "NOPE", 1, faces._ticks_ms() + 10000)
+    1:         self.assertEqual(ctx.exception.code, "BAD_REQUEST")
+       
+    1:     def test_learn_storage_missing(self):
+    1:         rt = faces.FaceRuntime(image_mod=object(), kpu_mod=object())
+    3:         with mock.patch("storage.sd_available", return_value=False), mock.patch(
+    1:             "storage.ensure_sd_layout", return_value=False
+               ):
+    2:             with self.assertRaises(faces.VisionError) as ctx:
+    1:                 rt.learn(lambda: FakeFrame(), config.PERSON_OWNER_1, 1, faces._ticks_ms() + 10000)
+    1:         self.assertEqual(ctx.exception.code, "STORAGE_UNAVAILABLE")
+       
+    1:     def test_learn_no_face(self):
+    1:         rt = faces.FaceRuntime(image_mod=object(), kpu_mod=object())
+    3:         rt._primary_face = lambda _frame: (None, 0)
+    3:         with mock.patch("storage.sd_available", return_value=True), mock.patch(
+    1:             "storage.ensure_sd_layout", return_value=True
+               ):
+    2:             with self.assertRaises(faces.VisionError) as ctx:
+    3:                 rt.learn(lambda: FakeFrame(), config.PERSON_OWNER_1, 2, faces._ticks_ms() + 10000)
+    1:         self.assertEqual(ctx.exception.code, "VISION_FAILED")
+    1:         self.assertEqual(ctx.exception.message, "no_face")
+       
+    1:     def test_learn_success_and_cache_update(self):
+    1:         rt = faces.FaceRuntime(image_mod=object(), kpu_mod=object())
+    2:         rt._primary_face = lambda _frame: (FakeDet(w=20, h=20), 1)
+    2:         rt._extract_roi = lambda _frame, _bbox: (FakeImage(score=10, sharp=7), (0, 0, 20, 20))
+    3:         with mock.patch("storage.sd_available", return_value=True), mock.patch(
+    1:             "storage.ensure_sd_layout", return_value=True
+    2:         ), mock.patch("storage.save_face_jpeg", return_value=True):
+    2:             out = rt.learn(lambda: FakeFrame(), config.PERSON_OWNER_1, 1, faces._ticks_ms() + 10000)
+    1:         self.assertEqual(out["status"], "learned")
+    1:         self.assertIn(config.PERSON_OWNER_1, rt._known_templates)
+       
+    1:     def test_reset_faces(self):
+    1:         rt = faces.FaceRuntime(image_mod=object(), kpu_mod=object())
+    1:         rt._known_templates = {config.PERSON_OWNER_1: FakeImage()}
+    3:         with mock.patch("storage.sd_available", return_value=True), mock.patch(
+    1:             "storage.ensure_sd_layout", return_value=True
+    2:         ), mock.patch("storage.reset_faces", return_value=1):
+    1:             out = rt.reset_faces()
+    1:         self.assertEqual(out["status"], "reset")
+    1:         self.assertEqual(rt._known_templates, {})
+       
+       
+    1: if __name__ == "__main__":
+           unittest.main()

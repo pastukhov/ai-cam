@@ -1,0 +1,33 @@
+    1: import unittest
+       
+    1: import config
+       
+       
+    2: class ConfigTests(unittest.TestCase):
+    1:     def test_core_limits_are_sane(self):
+    1:         self.assertGreater(config.MAX_JSON_BYTES, 0)
+    1:         self.assertGreater(config.MAX_OBJECTS, 0)
+    1:         self.assertGreater(config.MAX_SCAN_FRAMES, 0)
+    1:         self.assertGreater(config.MAX_LEARN_FRAMES, 0)
+    1:         self.assertGreater(config.COMMAND_TIMEOUT_MS, 0)
+    1:         self.assertGreater(config.DEDUP_TTL_MS, 0)
+       
+    1:     def test_known_persons(self):
+    1:         self.assertIn(config.PERSON_OWNER_1, config.KNOWN_PERSONS)
+    1:         self.assertIn(config.PERSON_OWNER_2, config.KNOWN_PERSONS)
+    1:         self.assertNotEqual(config.PERSON_OWNER_1, config.PERSON_OWNER_2)
+       
+    1:     def test_error_messages_present(self):
+    7:         for code in (
+                   "BAD_REQUEST",
+                   "BUSY",
+                   "TIMEOUT",
+                   "VISION_FAILED",
+                   "STORAGE_UNAVAILABLE",
+                   "MODEL_MISSING",
+               ):
+    6:             self.assertIn(code, config.ERROR_MESSAGES)
+       
+       
+    1: if __name__ == "__main__":
+           unittest.main()
